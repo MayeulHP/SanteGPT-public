@@ -1,2 +1,22 @@
-# SanteGPT-public
-Outil permettant de générer des cartes interactives pour visualiser des données médicales, basé sur ChatGPT, pour Santé Publique France
+# SantéGPT
+
+Permet de générer des cartes interactives avec une demande en language naturel.
+Créé pour Santé Publique France.
+
+## Files:
+
+- index.html 
+
+*Contains the logic for generating maps based on the API's response.*
+
+- regions.geojson / departements.geojson
+
+*Geographical data used to display the map*
+
+### To run:
+
+Entrez une clé API OpenAI dans index.html ligne 163.
+
+```python -m http.server```
+
+-----

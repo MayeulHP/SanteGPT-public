@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        /* Style pour masquer la carte de fond par défaut */
+        #map {
+            display: none;
+            position: fixed;
+            top: 250px;
+            left: 0;
+            pointer-events: none;
+            width: 100%;
+            height: calc(100% - 80px);
+            background-color: #f3f3f3;
+        }
+
+        #question-container {
+            text-align: center;
+            margin: 20px;
+        }
+
+        #question-input {
+            width: 70%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        #ask-button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(to right top, #c7f6cc, #bcf7dd, #b9f7ec, #bdf6f8, #c6f4ff) fixed;
+        }
+
+        /* Style pour la roulette de chargement */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #3498db;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-left: -15px;
+            margin-top: -15px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1 style="text-align: center;">SantéGPT</h1>
+    <div id="question-container">
+        <p>Posez une question sur les données médicales :</p>
+        <input type="text" id="question-input" placeholder="Combien de femmes atteintes de cancers en 2019 ?">
+        <button id="ask-button">Envoyer</button>
+        <div id="loading-spinner" style="display: none;">
+            <div class="spinner"></div>
+        </div>
+    </div>
+    <div id="info-container" style="text-align: center;">
+        <p id="api-response"></p>
+    </div>    
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/axios@0.21.4/dist/axios.min.js"></script>
+
+    <script>
+        fetch('prompt')
+            .then(response => response.text())
+            .then(data => {
+                // Utilisez la variable 'data' qui contient le contenu du prompt
+
+                var map = L.map('map', {
+                    center: [46.603354, 1.888334],
+                    zoom: 6,
+                    maxZoom: 6,
+                    dragging: false,
+                    zoomControl: false,
+                });
+
+                // Désactive le double-clic pour zoomer
+                map.doubleClickZoom.disable();
+
+                // Cache la carte de fond par défaut
+                L.tileLayer('data:,', {
+                    attribution: '',
+                }).addTo(map);
+
+                // Fonction pour formater les nombres avec des espaces pour une meilleure lisibilité
+                function formatNumberWithSpaces(number) {
+                    return number.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+                }
+
+                // Fonction pour récupérer les données de l'API et afficher les départements avec les données pertinentes
+                function fetchData(query) {
+                    fetch(`https://data.ameli.fr/api/explore/v2.1/catalog/datasets/effectifs/records?limit=100&${query}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            fetch('departements.geojson') // Utilisez le fichier GeoJSON des départements
+                                .then(response => response.json())
+                                .then(geojsonData => {
+                                    L.geoJSON(geojsonData, {
+                                        style: {
+                                            fillColor: 'blue',
+                                            color: 'white',
+                                            weight: 1,
+                                        },
+                                        onEachFeature: function (feature, layer) {
+                                            var departementCode = feature.properties.code; // Code du département du GeoJSON
+                                            // Recherche des données pertinentes dans la réponse de l'API
+                                            var apiData = data.results.find(item => item.dept === departementCode);
+                                            // Créez un contenu de popup avec les données pertinentes de l'API ou un message d'informations manquantes
+                                            var popupContent = `
+                                        <b>Département : </b>${feature.properties.nom}<br>
+                                    `;
+                                            if (apiData) {
+                                                var prevalencePercentage = (apiData.prev).toFixed(2);
+                                                popupContent += `
+                                            <b>Maladie : </b>${apiData.patho_niv1}<br>
+                                            <b>Catégorie : </b>${apiData.patho_niv2}<br>
+                                            <b>Année : </b>${apiData.annee}<br>    
+                                            <b>Prévalence : </b>${prevalencePercentage}%<br>
+                                            <b>Population du département : </b>${formatNumberWithSpaces(apiData.npop)}<br>
+                                            <b>Nombre de malades : </b>${formatNumberWithSpaces(apiData.ntop)}<br>
+                                        `;
+                                            } else {
+                                                popupContent += `
+                                            <i>Données indisponibles</i><br>
+                                        `;
+                                            }
+                                            layer.bindPopup(popupContent);
+                                        }
+                                    }).addTo(map);
+                                });
+                        });
+                }
+
+                async function fetchOpenAIData(question) {
+                    const apiKey = 'sk-xxx'; // Remplacez par votre clé API OpenAI
+
+                    try {
+                        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+                            model: 'gpt-3.5-turbo',
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: `${data}`,
+                                },
+                                {
+                                    role: 'user',
+                                    content: question, // Votre question ici
+                                },
+                            ],
+                        }, {
+                            headers: {
+                                'Authorization': `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                        });
+
+                        console.log(`Returning : ${response.data.choices[0].message.content}`)
+                        return response.data.choices[0].message.content;
+                    } catch (error) {
+                        console.error('Erreur lors de la requête à l\'API OpenAI', error);
+                        return null;
+                    }
+                }
+
+                function jsonToQueryString(json) {
+                    // Mappez chaque paire clé-valeur de l'objet JSON en une chaîne "clé%3A%22valeur%22" et joignez-les avec "&"
+                    return Object.keys(json)
+                        .map(key => `refine=${key}%3A%22${json[key]}%22`)
+                        .join('&');
+                }
+
+                // Gestionnaire d'événement pour le bouton "Envoyer"
+                document.getElementById('ask-button').addEventListener('click', async function () {
+                    var question = document.getElementById('question-input').value;
+                    // Stockez la question dans une variable (vous pouvez faire ce que vous souhaitez avec la question ici)
+
+                    // Désactivez le bouton "Envoyer" pendant le chargement
+                    document.getElementById('ask-button').disabled = true;
+
+                    // Affichez la roulette de chargement
+                    document.getElementById('loading-spinner').style.display = 'block';
+
+                    // Appelez la fonction pour récupérer les données de l'API OpenAI
+                    var openAIData = await fetchOpenAIData(question);
+                    console.log("Fetching OpenAI ########")
+                    if (openAIData) {
+                        // Transformez la réponse JSON en un objet JavaScript
+                        const openAIResponse = JSON.parse(openAIData);
+
+                        // Mise à jour des éléments d'information
+                        const infoContainer = document.getElementById('info-container');
+                        const apiResponseElement = document.getElementById('api-response');
+
+                        // Affichez la réponse de l'API
+                        apiResponseElement.textContent = `Requête générée : ${openAIData}`;
+
+                        // Affichez les informations supplémentaires
+                        infoContainer.style.display = 'block';
+
+
+                        console.log('Réponse de l\'API OpenAI :', openAIData);
+                        fetchData(jsonToQueryString(JSON.parse(openAIData)))
+                        // Utilisez openAIData pour construire la requête et afficher les données sur la carte
+                    }
+
+                    // Réactivez le bouton "Envoyer" après que le chargement soit terminé
+                    document.getElementById('ask-button').disabled = false;
+
+                    // Masquez la roulette de chargement
+                    document.getElementById('loading-spinner').style.display = 'none';
+
+
+                    // Affichez la carte une fois la question posée
+                    document.getElementById('map').style.display = 'block';
+                    setTimeout(function () {
+                        map.invalidateSize();
+                    }, 1);
+                });
+            })
+            .catch(error => {
+                console.error('Erreur lors du chargement du fichier prompt.txt', error);
+            });
+    </script>
+</body>
+
+</html>
